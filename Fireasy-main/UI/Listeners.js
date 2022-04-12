@@ -1,0 +1,370 @@
+function defineListeners(){
+
+    var checkboxincoming = document.querySelector("input[name=showincoming]");
+    var checkboxredirect = document.querySelector("input[name=showredirect]");
+    var checkboxblock = document.querySelector("input[name=showblock]");
+    var checkboxoutgoing = document.querySelector("input[name=showoutgoing]");
+    var checkboxnat = document.querySelector("input[name=shownat]");
+    var checkUconnectedNodes = document.querySelector("input[name=showUnconnectedNodes]");
+
+    myDiagram.addDiagramListener("ExternalObjectsDropped", function (e) {
+        // stop any ongoing text editing
+        if (myDiagram.currentTool instanceof go.TextEditingTool) {
+            myDiagram.currentTool.acceptText(go.TextEditingTool.LostFocus);
+        }
+        //verifica se está sendo solto um firewall dentro do diagrama.
+        //se for, muda o alignment do placeholder do firewall pra BottomLeft, pra posicionar a primeira interface
+        //seleciona apenas o grupo firewall, ao inves do firewall e a interface criada
+        //expande o grupo que estava comprimido na pallet.
+        if (e.subject.first().data.category === "Firewall") {
+            firewall_pallet = myPallet.findNodesByExample({category: "Firewall"});
+            firewall_pallet = firewall_pallet.iterator.first();
+            myPallet.model.setDataProperty(firewall_pallet,"visible",false)
+            addInterface();
+            e.subject.first().setProperties({
+                "placeholder.alignment": go.Spot.BottomLeft,
+                "SHAPE.desiredSize": new go.Size(100, 100)
+            })
+            myDiagram.select(e.subject.first());
+            myDiagram.commandHandler.expandSubGraph();
+        }
+        if(e.subject.first().data.category === "Host"){
+            e.subject.first().setProperties({
+                "TEXT.text": "Host"+host_count
+            })
+            host_count++;
+        }
+        if(e.subject.first().data.category === "Hosts"){
+            e.subject.first().setProperties({
+                "TEXT.text": "Hosts"+hosts_count
+            })
+            hosts_count++;
+        }
+        if(e.subject.first().data.category === "Network"){
+            e.subject.first().setProperties({
+                "TEXT.text": "Network"+network_count
+            })
+            network_count++;
+        }
+        if(e.subject.first().data.category === "Internet"){
+            e.subject.first().setProperties({
+                "TEXT.text": "Internet"+internet_count
+            })
+            internet_count++;
+        }
+    });
+
+    myDiagram.addDiagramListener("ChangedSelection", function (e) {
+        var select = myDiagram.selection.first();
+        if (!(select instanceof go.Link)) return;
+    });
+
+    myDiagram.addDiagramListener("SelectionDeleted", function (e) {
+        if (e.subject.first().data.category === "Interface") {
+            resizeFirewallDown(e.subject.first());
+        }
+        if (e.subject.first().data.category === "Firewall") {
+            firewall_pallet = myPallet.findNodesByExample({category: "Firewall"});
+            firewall_pallet = firewall_pallet.iterator.first();
+            myPallet.model.setDataProperty(firewall_pallet,"visible",true);
+        }
+
+    });
+
+    myDiagram.addDiagramListener("SelectionDeleting", function (e) {
+        var it = e.subject.iterator;
+        var category;
+        while (it.next()) {
+            category = it.value.data.category;
+            switch (category){
+                case "Interface":
+                    deletingNode(it.value);
+                    break;
+                case "Host":
+                    deletingHost(it.value);
+                    break;
+                case "Hosts":
+                case "Network":
+                case "Internet":
+                    deletingNode(it.value);
+                    break;
+                case "TrafegoEntrada":
+                case "TrafegoRedirecionamento":
+                    deletingIncomingTraffic(it.value.data);
+                    break;
+                case "TrafegoSaida":
+                case "TrafegoTraducao":
+                    deletingOutgoingTraffic(it.value.data);
+                    break;
+                default: break;
+            }
+        }
+
+    });
+
+    myDiagram.commandHandler.canDeleteSelection = function(){
+        var sel = myDiagram.selection;
+        var it = sel.iterator;
+        while(it.next()){
+            if(it.value.data.category == "Firewall" || it.value.data.category == "Interface"){
+                res = window.confirm("There are some core etities in the selection, such as Firewall or Interface(s). Are you sure you want to delete them?");
+                if(res){
+                    return true;
+                };
+                return false;
+            }
+        }
+        return true;
+    }
+
+    myDiagram.addDiagramListener("LinkDrawn", function (e) {
+        link = e.subject.data;
+        link2 = e.subject;
+        //myDiagram.startTransaction("Set Link Attrs");
+        from = myDiagram.model.findNodeDataForKey(myDiagram.model.getFromKeyForLinkData(link)).text
+        //myDiagram.model.setDataProperty(link, "From", from);
+        to = myDiagram.model.findNodeDataForKey(myDiagram.model.getToKeyForLinkData(link)).text
+        //myDiagram.model.setDataProperty(link, "To", to);
+        //myDiagram.commitTransaction("Set Link Attrs");
+        switch (link.category) {
+            case 'TrafegoEntrada':
+                myDiagram.startTransaction("Set Link Attrs");
+                myDiagram.model.setDataProperty(link, "text",traffic_in_ids+" | Tráfego de Entrada"+incoming_traffic_count);
+                incoming_traffic_count++;
+                /*link2.setProperties({
+                    "ID.text": traffic_in_ids
+                });*/
+                myDiagram.model.setDataProperty(link, "ID", traffic_in_ids);
+                traffic_in_ids++;
+                myDiagram.model.setDataProperty(link, "Source Port", "*");
+                myDiagram.model.setDataProperty(link, "Redirect Port", "");
+                myDiagram.model.setDataProperty(link, "Protocols", "");
+                myDiagram.model.setDataProperty(link, "AF", "inet");
+                tointerface = myDiagram.findNodeForKey(myDiagram.model.getToKeyForLinkData(link));
+                interface_device = tointerface.data["Device Name"];
+                myDiagram.model.setDataProperty(link, "Interface", to);
+                myDiagram.model.setDataProperty(link, "External Entity", from);
+                myDiagram.model.setDataProperty(link, "ID_out", null);
+                myDiagram.commitTransaction("Set Link Attrs");
+                break;
+            case 'TrafegoSaida':
+                myDiagram.startTransaction("Set Link Attrs");
+                myDiagram.model.setDataProperty(link, "text","Outgoing Traffic "+outgoing_traffic_count);
+                outgoing_traffic_count++;
+                myDiagram.model.setDataProperty(link, "ID", traffic_out_ids);
+                traffic_out_ids++;
+                frominterface = myDiagram.findNodeForKey(myDiagram.model.getFromKeyForLinkData(link));
+                interface_device = frominterface.data["Device Name"];
+                myDiagram.model.setDataProperty(link, "Interface", from);
+                myDiagram.model.setDataProperty(link, "External Entity", to);
+                myDiagram.model.setDataProperty(link, "Destiny Port", "*");
+                myDiagram.model.setDataProperty(link, "NAT", false);
+                myDiagram.model.setDataProperty(link, "Incoming Traffics", "");
+                myDiagram.commitTransaction("Set Link Attrs");
+                break;
+            case 'TrafegoBloqueio':
+                myDiagram.startTransaction("Set Link Attrs");
+                myDiagram.model.setDataProperty(link, "text", traffic_blk_ids+" | "+"Bloqueio de Entrada "+block_traffic_count);
+                block_traffic_count++;
+                /*link2.setProperties({
+                    "ID.text": traffic_blk_ids
+                });*/
+                myDiagram.model.setDataProperty(link, "ID",traffic_blk_ids);
+                traffic_blk_ids++;
+                myDiagram.model.setDataProperty(link, "AF", "inet");
+                tointerface = myDiagram.findNodeForKey(myDiagram.model.getToKeyForLinkData(link));
+                interface_device = tointerface.data["Device Name"];
+                myDiagram.model.setDataProperty(link, "Interface", to);
+                myDiagram.model.setDataProperty(link, "Source Entity", from);
+                myDiagram.model.setDataProperty(link, "Destiny Entity", "");
+                myDiagram.model.setDataProperty(link, "Source Port", "*");
+                myDiagram.model.setDataProperty(link, "Destiny Port", "*");
+                myDiagram.model.setDataProperty(link, "Protocols", "");
+                myDiagram.commitTransaction("Set Link Attrs");
+                break;
+            case 'TrafegoRedirecionamento':
+                myDiagram.startTransaction("Set Link Attrs");
+                myDiagram.model.setDataProperty(link, "ID", "");
+                myDiagram.model.setDataProperty(link, "Source Port", "*");
+                myDiagram.model.setDataProperty(link, "Redirect Port", "");
+                myDiagram.model.setDataProperty(link, "Protocols", "");
+                myDiagram.model.setDataProperty(link, "AF", "inet");
+                tointerface = myDiagram.findNodeForKey(myDiagram.model.getToKeyForLinkData(link));
+                interface_device = tointerface.data["Device Name"];
+                myDiagram.model.setDataProperty(link, "Interface", to);
+                myDiagram.model.setDataProperty(link, "External Entity", from);
+                myDiagram.model.setDataProperty(link, "ID_out", null);
+                myDiagram.commitTransaction("Set Link Attrs");
+                break;
+            case 'TrafegoTraducao' :
+                myDiagram.startTransaction("Set Link Attrs");
+                frominterface = myDiagram.findNodeForKey(myDiagram.model.getFromKeyForLinkData(link));
+                interface_device = frominterface.data["Device Name"];
+                myDiagram.model.setDataProperty(link, "Interface", from);
+                myDiagram.model.setDataProperty(link, "External Entity", to);
+                myDiagram.model.setDataProperty(link, "Destiny Port", "*");
+                myDiagram.model.setDataProperty(link, "NAT", true);
+                myDiagram.model.setDataProperty(link, "Traffic IDs", "");
+                myDiagram.commitTransaction("Set Link Attrs");
+                break;
+            default:
+        }
+    });
+
+    myDiagram.addModelChangedListener(function(evt) {
+        // ignore unimportant Transaction events
+        if (!evt.isTransactionFinished) return;
+        var txn = evt.object;  // a Transaction
+        if (txn === null) return;
+
+        json = myDiagram.model.toJson();
+        document.getElementById("JsonModel").value = json;
+
+        //if(document.getElementById("showhosts") != show_unconnected_hosts)
+
+        // iterate over all of the actual ChangedEvents of the Transaction
+        txn.changes.each(function(e) {
+            // ignore any kind of change other than adding/removing a node
+            if (e.modelChange !== "nodeDataArray") return;
+            // record node undo event
+            if (e.change === go.ChangedEvent.Remove) return;
+            if(evt.propertyName !== "FinishedUndo") return;
+            if(e.newValue.category === "Firewall"){
+                firewall_pallet = myPallet.findNodesByExample({category: "Firewall"});
+                firewall_pallet = firewall_pallet.iterator.first();
+                myPallet.model.setDataProperty(firewall_pallet,"visible",true);
+            }
+        });
+    });
+
+
+    checkboxincoming.addEventListener('change', function() {
+        if (this.checked) {
+            var incoming_diagram = myDiagram.findLinksByExample({category: "TrafegoEntrada"});
+            it = incoming_diagram.iterator;
+            while(it.next()){
+                myDiagram.startTransaction("Change traffic visible");
+                myDiagram.model.setDataProperty(it.value.data, "opacity", 1);
+                myDiagram.commitTransaction("Change traffic visible");
+            }
+        } else {
+            var incoming_diagram = myDiagram.findLinksByExample({category: "TrafegoEntrada"});
+            it = incoming_diagram.iterator;
+            while(it.next()){
+                myDiagram.startTransaction("Change traffic visible");
+                myDiagram.model.setDataProperty(it.value.data, "opacity", 0.0);
+                myDiagram.commitTransaction("Change traffic visible");
+            }
+        }
+        });
+
+    checkboxredirect.addEventListener('change', function() {
+        if (this.checked) {
+            var incoming_diagram = myDiagram.findLinksByExample({category: "TrafegoRedirecionamento"});
+            it = incoming_diagram.iterator;
+            while(it.next()){
+                myDiagram.startTransaction("Change traffic visible");
+                myDiagram.model.setDataProperty(it.value.data, "opacity", 1);
+                myDiagram.commitTransaction("Change traffic visible");
+            }
+        } else {
+            var incoming_diagram = myDiagram.findLinksByExample({category: "TrafegoRedirecionamento"});
+            it = incoming_diagram.iterator;
+            while(it.next()){
+                myDiagram.startTransaction("Change traffic visible");
+                myDiagram.model.setDataProperty(it.value.data, "opacity", 0.0);
+                myDiagram.commitTransaction("Change traffic visible");
+            }
+        }
+    });
+
+
+    checkboxblock.addEventListener('change', function() {
+        if (this.checked) {
+            var incoming_diagram = myDiagram.findLinksByExample({category: "TrafegoBloqueio"});
+            it = incoming_diagram.iterator;
+            while(it.next()){
+                myDiagram.startTransaction("Change traffic visible");
+                myDiagram.model.setDataProperty(it.value.data, "opacity", 1);
+                myDiagram.commitTransaction("Change traffic visible");
+            }
+        } else {
+            var incoming_diagram = myDiagram.findLinksByExample({category: "TrafegoBloqueio"});
+            it = incoming_diagram.iterator;
+            while(it.next()){
+                myDiagram.startTransaction("Change traffic visible");
+                myDiagram.model.setDataProperty(it.value.data, "opacity", 0.0);
+                myDiagram.commitTransaction("Change traffic visible");
+            }
+        }
+    });
+
+
+    checkboxoutgoing.addEventListener('change', function() {
+        if (this.checked) {
+            var incoming_diagram = myDiagram.findLinksByExample({category: "TrafegoSaida"});
+            it = incoming_diagram.iterator;
+            while(it.next()){
+                myDiagram.startTransaction("Change traffic visible");
+                myDiagram.model.setDataProperty(it.value.data, "opacity", 1);
+                myDiagram.commitTransaction("Change traffic visible");
+            }
+        } else {
+            var incoming_diagram = myDiagram.findLinksByExample({category: "TrafegoSaida"});
+            it = incoming_diagram.iterator;
+            while(it.next()){
+                myDiagram.startTransaction("Change traffic visible");
+                myDiagram.model.setDataProperty(it.value.data, "opacity", 0.0);
+                myDiagram.commitTransaction("Change traffic visible");
+            }
+        }
+    });
+
+
+    checkboxnat.addEventListener('change', function() {
+        if (this.checked) {
+            var incoming_diagram = myDiagram.findLinksByExample({category: "TrafegoTraducao"});
+            it = incoming_diagram.iterator;
+            while(it.next()){
+                myDiagram.startTransaction("Change traffic visible");
+                myDiagram.model.setDataProperty(it.value.data, "opacity", 1);
+                myDiagram.commitTransaction("Change traffic visible");
+            }
+        } else {
+            var incoming_diagram = myDiagram.findLinksByExample({category: "TrafegoTraducao"});
+            it = incoming_diagram.iterator;
+            while(it.next()){
+                myDiagram.startTransaction("Change traffic visible");
+                myDiagram.model.setDataProperty(it.value.data, "opacity", 0.0);
+                myDiagram.commitTransaction("Change traffic visible");
+            }
+        }
+    });
+
+
+    checkUconnectedNodes.addEventListener('change', function() {
+        if (this.checked) {
+            var nodes = myDiagram.nodes;
+            it = nodes.iterator;
+            while(it.next()){
+                myDiagram.startTransaction("Change nodes visible");
+                myDiagram.model.setDataProperty(it.value.data, "opacity", 1);
+                myDiagram.commitTransaction("Change nodes visible");
+            }
+        } else {
+            var nodes = myDiagram.nodes;
+            it = nodes.iterator;
+            while(it.next()){
+                if(it.value.category == "Firewall" || it.value.category == "Interface") continue;
+                myDiagram.startTransaction("Change nodes visible");
+                links =  it.value.findLinksConnected();
+                console.log(links.count);
+                if(links.count == 0){
+                    myDiagram.model.setDataProperty(it.value.data, "opacity", 0.0);
+                }
+                myDiagram.commitTransaction("Change nodes visible");
+            }
+        }
+    });
+
+}
